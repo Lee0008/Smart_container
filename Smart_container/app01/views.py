@@ -6,10 +6,11 @@ import json
 import os
 import shutil
 import sys
+import time
 from typing import Container
 
 import cv2
-import memcache
+#import memcache
 import numpy as np
 import pymysql
 import requests
@@ -25,8 +26,33 @@ from xpinyin import Pinyin
 
 # Create your views here.
 
+
+
+
+
+
+
+url = "http://127.0.0.1:18081/recognition/prediction"
+
+# with open(os.path.join(".",  imgpath), 'rb') as file:
+#     image_data1 = file.read()
+# image = cv2_to_base64(image_data1)
+# data = {"key": ["image"], "value": [image]}
+
+# for i in range(1):
+#     r = requests.post(url=url, data=json.dumps(data))
+#     print(r.json())
+
+
+
 KEY='mHAxsLYz'      #秘钥
 PICTURE_ROOT = '/root/Smart_container/PaddleClas/dataset/retail'
+
+
+
+def cv2_to_base64(image):
+    return base64.b64encode(image).decode('utf8')
+
 
 def des_encrypt(s):
     """
@@ -76,7 +102,6 @@ def SKexpired(old_sessionID, code):
     return sessionID
 
 
-
 def information():
     container = models.TContainer.objects.all()
 
@@ -87,6 +112,7 @@ def information():
         temp.append(i.container_name)
         temp.append(i.container_price)
         temp.append(i.picture_address)
+        temp.append(i.stock)
         container_all.append(temp)
     
     return container_all
@@ -103,7 +129,7 @@ def update():
             container_address = container_single[3]
             fh.write(container_address + '\t' + container_name + '\n')
         fh.close()
-   #有问题要修改
+
     os.system('python3 /root/Smart_container/PaddleClas/deploy/python/build_gallery.py -c /root/Smart_container/PaddleClas/deploy/configs/build_product.yaml -o IndexProcess.data_file="/root/Smart_container/PaddleClas/dataset/retail/data_update.txt" -o IndexProcess.index_dir="/root/Smart_container/PaddleClas/dataset/retail/index_update"')
 
 
@@ -122,7 +148,8 @@ def reference(request):
             sessionID = SKexpired(sessionID, code)
 
         image_name = base64.b64decode(value)
-        
+        start_time = time.time()
+
 
         image_file = '/root/Smart_container/PaddleClas/dataset/retail/test1.jpg'
         with open(image_file, "wb") as fh:
@@ -136,50 +163,46 @@ def reference(request):
         price_all = 0.0
 
 
-        os.system('python3 /root/Smart_container/PaddleClas/deploy/python/predict_system.py -c /root/Smart_container/PaddleClas/deploy/configs/inference_product.yaml -o Global.use_gpu=False')
-        print('234')
-	    
-        log_path = '/root/Smart_container/PaddleClas/dataset/log.txt'
-        
+        with open(os.path.join(".",  image_file), 'rb') as file:
+            image_data1 = file.read()
+            image = cv2_to_base64(image_data1)
+            data = {"key": ["image"], "value": [image]}
 
-        with open(log_path, 'r', encoding='utf8') as F:
+            for i in range(1):
+                r = requests.post(url=url, data=json.dumps(data))
+                result = r.json()['value'][0]
+                result=eval(result)
 
-            str_result_list = F.readlines()
-            print(str_result_list)
+                if result == []:
+                    rec_deplay_str_all = "Please connect root to upload container's name and it's price!\n"
+                    return JsonResponse({"state": 'true',"container": rec_deplay_str_all})
 
-            if str_result_list[0] == "Please connect root to upload container's name and it's price!\n":
+                else:   
 
-                rec_deplay_str_all = str_result_list[0]
-                os.remove(log_path)
-                return JsonResponse({"state": 'true',"container": rec_deplay_str_all})
+                    print(type(result))
+                    for rec_docs in result:
+                        price_all = 0
+                        rec_docs_price = []
+                        rec_docs_list.append(rec_docs['rec_docs'])
 
-            else:
+                    number_list = []
 
-                for str_result in str_result_list:
+                    for rec_docs_sig in rec_docs_list:
+                        for res in res_all:
+                            if  res.container_name== rec_docs_sig:
+                                temp = []
+                                rec_price = res.container_price
+                                price_all += float(rec_price)
+                                number_list.append(res.number)
+                                temp.append(rec_docs_sig)
+                                temp.append(rec_price)
+                                rec_docs_price.append(temp)
 
-                    price_all = 0
-
-                    rec_docs_price = []
-
-                    dict_result = eval(str_result)
-
-                    rec_docs = dict_result['rec_docs']  # 结果
-                    rec_docs_list.append(rec_docs)
-
-                print(rec_docs_list)
-
-                
-                for rec_docs_sig in rec_docs_list:
-                    for res in res_all:
-                        if  res.container_name== rec_docs_sig:
-                            rec_price = res.container_price
-                            price_all += float(rec_price)
-                            rec_docs_price.append(rec_docs_sig)
-                            rec_docs_price.append(rec_price)
-
-            print(rec_docs_price)
-            os.remove(log_path)
-            return JsonResponse({"state": 'true',"container": rec_docs_price,"price_all": price_all,"picture_test":'test1.jpg'})
+                print(rec_docs_price)
+                stop_time = time.time()
+                print(stop_time-start_time)
+             
+                return JsonResponse({"state": 'true', "number":number_list ,"container": rec_docs_price, "price_all": price_all, "picture_test":'test1.jpg'})
     else:
         return JsonResponse({"state": 'false'})
 
@@ -226,6 +249,7 @@ def record(request):             #增加模块
         code = request.POST.get('code')
         s_container_name = request.POST.get('container_name')         #商品名称 str
         s_container_price = request.POST.get('container_price')       #商品单价 float
+        s_stock = request.POST.get('container_stock')                #商品库存 int
 
         picture = request.FILES['productimage']   #照片
 
@@ -233,6 +257,7 @@ def record(request):             #增加模块
             sessionID = SKexpired(sessionID, code)
 
         value_name = s_container_name
+        print(s_container_name)
 
 
         p = Pinyin()                 
@@ -253,12 +278,16 @@ def record(request):             #增加模块
         
         old_container = models.TContainer.objects.filter(container_name=s_container_name)     
         old_container = old_container.values() 
+        print(s_stock)
 
         if not bool(old_container): 
 
-            s_container = models.TContainer(number = s_number, container_name = s_container_name, container_price = s_container_price, picture_address = s_picture_address)
+            s_container = models.TContainer(number=s_number, container_name=s_container_name, container_price=s_container_price,stock = s_stock, picture_address=s_picture_address)
             s_container.save()
             update()
+            
+            print("库存为："+s_stock)
+
             return JsonResponse({"state": 'true', "sessionID": sessionID})
 
         else:
@@ -311,11 +340,10 @@ def replace(request):               #修改模块
         code = request.POST.get('code')
         number = request.POST.get('number')
         r_container_name = request.POST.get('container_name')
-        print(r_container_name)
         r_container_price = request.POST.get('container_price')
-        print(r_container_price)
+        r_stock = request.POST.get('container_stock')
         isimageRevised = request.POST.get('isimageRevised')
-        print(isimageRevised)
+        
 
         if isimageRevised == True:
             r_picture = request.FILES['productimage']
@@ -328,16 +356,25 @@ def replace(request):               #修改模块
 
         if isSKexpried:
             sessionID = SKexpired(sessionID, code)
-     
-        models.TContainer.objects.filter(number = number).update(container_name = r_container_name)
 
-        models.TContainer.objects.filter(number = number).update(container_price = r_container_price)
-        
-        g = models.TContainer.objects.filter(number = number)
+            
+        numbers = int(number)
 
-        result = models.TContainer.objects.filter(number = number)
+        containers = models.TContainer.objects.all()
+
+        for i in containers:
+            if i.number == numbers:
+                stock = i.stock + int(r_stock)
+                break
+
+        models.TContainer.objects.filter(number=number).update(container_name=r_container_name)
+
+        models.TContainer.objects.filter(number=number).update(container_price=r_container_price)
+
+        models.TContainer.objects.filter(number=number).update(stock=stock)
 
         update()
+
         return JsonResponse({"state": 'true', "sessionID": sessionID})
         
     else:
@@ -367,6 +404,9 @@ def find(request):    #检索模块
         code = request.POST.get('code')
         searchtarget = request.POST.get('searchtarget')
 
+        if isSKexpried:
+            sessionID = SKexpired(sessionID, code)
+
         container = models.TContainer.objects.all()
 
         find_result = []
@@ -380,9 +420,56 @@ def find(request):    #检索模块
                 temp.append(i.container_name)
                 temp.append(i.container_price)
                 temp.append(i.picture_address)
+                temp.append(i.stock)
                 find_result.append(temp)
 
         return JsonResponse({"state": 'true', "sessionID": sessionID,"container_all":find_result})
+    else:
+        return JsonResponse({"state": 'false'})
+
+
+def stock_sale(request):   #商品销售
+    if request.method == "POST":
+        sessionID = request.POST.get('sessionID')
+        isSKexpried = request.POST.get('isSKexpried')
+        code = request.POST.get('code')
+        number_s = request.POST.get('numberlist')
+
+        if isSKexpried:
+            sessionID = SKexpired(sessionID, code)
+        
+        print(number_s)
+        
+        number_s = number_s.split(',')
+        number_s = list(map(int, number_s))
+        print(number_s)
+
+        classify = []
+        container_sale = []
+
+        for i in number_s:
+            Temp = []
+            if i not in classify:
+                Temp.append(i)
+                classify.append(i)
+                temp = 0
+                for j in number_s:
+                    if Temp[0] == j:
+                        temp = temp + 1
+                Temp.append(temp)
+                container_sale.append(Temp)
+
+        print(container_sale)
+
+        container = models.TContainer.objects.all()
+
+        for i in container_sale:                    #[['number','stock'],.....]
+            for j in container:
+                if j.number == i[0]:
+                    stock = j.stock - i[1]
+                    models.TContainer.objects.filter(number=i[0]).update(stock=stock)
+                    break
+        return JsonResponse({"state": 'true', "sessionID": sessionID})
     else:
         return JsonResponse({"state": 'false'})
 
@@ -398,9 +485,8 @@ def reference_client(request):
         img_decode = base64.b64decode(img_decode_) #解base64编码，得图片的二进制
         img_np_ = np.frombuffer(img_decode, np.uint8)
         img = cv2.imdecode(img_np_, cv2.COLOR_RGB2BGR) #转为opencv格式
-
-        cv2.imwrite('/root/Smart_container/PaddleClas/dataset/test_pic/test_client.jpg', img) #存储路径
-
+        img_path_client = '/root/Smart_container/PaddleClas/dataset/test_pic/test_client.jpg'
+        cv2.imwrite(img_path_client, img) #存储路径
         ###      商品识别
         res_all = models.TContainer.objects.all()
 
@@ -408,48 +494,39 @@ def reference_client(request):
 
         price_all = 0.0
 
-        os.system('python3 /root/Smart_container/PaddleClas/deploy/python/predict_client.py -c /root/Smart_container/PaddleClas/deploy/configs/inference_client.yaml -o Global.use_gpu=False')
-        print('234')
-	    
-        log_path = '/root/Smart_container/PaddleClas/dataset/log_client.txt'
-        
-        with open(log_path, 'r', encoding='utf8') as F:
+        with open(os.path.join(".",  img_path_client), 'rb') as file:
+            image_data1 = file.read()
+            image = cv2_to_base64(image_data1)
+            data = {"key": ["image"], "value": [image]}
 
-            str_result_list = F.readlines()
-            print(str_result_list)
+            for i in range(1):
+                r = requests.post(url=url, data=json.dumps(data))
+                result = r.json()['value'][0]
+                result=eval(result)
 
-            if str_result_list[0] == "Please connect root to upload container's name and it's price!\n":
+                if result == []:
+                    rec_deplay_str_all = "Please connect root to upload container's name and it's price!\n"
+                    return JsonResponse({"state": 'true',"container": rec_deplay_str_all})
+                else:   
 
-                rec_deplay_str_all = str_result_list[0]
-                os.remove(log_path)
-                return JsonResponse({"state": 'true',"container": rec_deplay_str_all})
+                    print(type(result))
+                    for rec_docs in result:
+                        price_all = 0
+                        rec_docs_price = []
+                        rec_docs_list.append(rec_docs['rec_docs'])
 
-            else:
+                    print(rec_docs_list)
 
-                for str_result in str_result_list:
+                    for rec_docs_sig in rec_docs_list:
+                        for res in res_all:
+                            if  res.container_name== rec_docs_sig:
+                                rec_price = res.container_price
+                                price_all += float(rec_price)
+                                rec_docs_price.append(rec_docs_sig)
+                                rec_docs_price.append(rec_price)
 
-                    price_all = 0
-
-                    rec_docs_price = []
-
-                    dict_result = eval(str_result)
-
-                    rec_docs = dict_result['rec_docs']  # 结果
-                    rec_docs_list.append(rec_docs)
-
-                print(rec_docs_list)
-
-                for rec_docs_sig in rec_docs_list:
-                    for res in res_all:
-                        if  res.container_name== rec_docs_sig:
-                            rec_price = res.container_price
-                            price_all += float(rec_price)
-                            rec_docs_price.append(rec_docs_sig)
-                            rec_docs_price.append(rec_price)
-
-            print(rec_docs_price)
-            os.remove(log_path)
-            return JsonResponse({"state": 'true',"container": rec_docs_price,"price_all": price_all,"picture_test":'test_client.jpg'})
+                print(rec_docs_price)
+                return JsonResponse({"state": 'true',"container": rec_docs_price,"price_all": price_all,"picture_test":'test_client.jpg'})
 
     else:
         return JsonResponse({"state": 'false'})
